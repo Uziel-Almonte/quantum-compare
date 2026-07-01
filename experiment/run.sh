@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Unified TLS experiment: classical vs PQC under IDENTICAL conditions.
-# Same 150 KB page, curl measurement, tc netem latency, 60 runs, one CSV schema.
+# Same 150 KB page, curl measurement, tc netem latency, 60 runs per arm,
+# ONE CSV schema. Trial order is randomized/interleaved (not run in fixed
+# blocks) to avoid confounding algorithm effects with time/system drift.
 set -euo pipefail
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
@@ -18,9 +20,18 @@ PAGE_PATH="$WWW_DIR/$PAGE_FILE"
 EXPECTED_BYTES=$((PAGE_SIZE_KB * 1024))
 CSV_OUT="${CSV_OUT:-$DATA_DIR/results.csv}"
 MANIFEST="$DATA_DIR/manifest.txt"
-PID_FILE="$DATA_DIR/server.pid"
-LOG_FILE="$DATA_DIR/server.log"
+ORDER_FILE="$DATA_DIR/order.txt"
+
+# Two servers run simultaneously, one per arm, so trials can be interleaved
+# without paying a server-restart cost between every single measurement.
+PQC_PORT="${PQC_PORT:-$((PORT + 1))}"
+PID_FILE_CL="$DATA_DIR/server_classical.pid"
+PID_FILE_PQ="$DATA_DIR/server_pqc.pid"
+LOG_FILE_CL="$DATA_DIR/server_classical.log"
+LOG_FILE_PQ="$DATA_DIR/server_pqc.log"
+
 NETEM_APPLIED=0
+LATENCY_METHOD=""
 
 CL_CA="$CERT_DIR/classical/ca.crt"
 CL_CERT="$CERT_DIR/classical/server.crt"
@@ -30,7 +41,7 @@ PQ_CERT="$CERT_DIR/pqc/server.crt"
 PQ_KEY="$CERT_DIR/pqc/server.key"
 
 need_tools() {
-  for t in openssl curl bc awk dd; do
+  for t in openssl curl bc awk dd shuf; do
     command -v "$t" >/dev/null || { echo "missing: $t" >&2; exit 1; }
   done
   local ver; ver="$(openssl version | awk '{print $2}')"
@@ -39,8 +50,6 @@ need_tools() {
     echo "OpenSSL >= 3.5 required for PQC arm (found $ver)" >&2; exit 1
   fi
 }
-
-LATENCY_METHOD=""
 
 latency_on() {
   if sudo -n tc qdisc replace dev lo root netem delay "${SIM_LATENCY_MS}ms" >/dev/null 2>&1; then
@@ -67,8 +76,6 @@ latency_off() {
   fi
 }
 
-trap 'latency_off' EXIT
-
 write_manifest() {
   mkdir -p "$DATA_DIR"
   {
@@ -81,11 +88,14 @@ write_manifest() {
     echo "sim_latency_ms=$SIM_LATENCY_MS"
     echo "latency_method=${LATENCY_METHOD:-pending}"
     echo "measure_tool=$MEASURE_TOOL"
-    echo "port=$PORT"
+    echo "classical_port=$PORT"
+    echo "pqc_port=$PQC_PORT"
     echo "classical_groups=$CLASSICAL_GROUPS"
     echo "classical_sigalgs=$CLASSICAL_SIGALGS"
     echo "pqc_groups=$PQC_GROUPS"
     echo "pqc_sigalgs=$PQC_SIGALGS"
+    echo "run_order=randomized-interleaved"
+    echo "run_order_file=$ORDER_FILE"
     echo "csv_schema=timestamp,mode,iteration,sim_latency_ms,page_bytes,downloaded_bytes,connect_ms,appconnect_ms,total_ms,tls_group,signature,success"
   } >"$MANIFEST"
 }
@@ -123,33 +133,44 @@ cmd_setup() {
   echo "==> Setup complete"
 }
 
+# stop_server <pidfile>
 stop_server() {
-  if [ -f "$PID_FILE" ]; then
-    kill "$(cat "$PID_FILE")" 2>/dev/null || true
-    rm -f "$PID_FILE"
+  local pidfile="$1"
+  if [ -f "$pidfile" ]; then
+    kill "$(cat "$pidfile")" 2>/dev/null || true
+    rm -f "$pidfile"
   fi
 }
 
+# start_server <mode> <cert> <key> <groups> <sigalgs> <port> <pidfile> <logfile>
 start_server() {
-  local mode="$1" cert="$2" key="$3" groups="$4" sigalgs="${5:-}"
-  stop_server
-  sleep 0.5
-  echo "==> Server [$mode] :$PORT groups=$groups${sigalgs:+ sig=$sigalgs}"
+  local mode="$1" cert="$2" key="$3" groups="$4" sigalgs="$5" port="$6" pidfile="$7" logfile="$8"
+  stop_server "$pidfile"
+  sleep 0.3
+  echo "==> Server [$mode] :$port groups=$groups${sigalgs:+ sig=$sigalgs}"
   local extra=()
   [ -n "$sigalgs" ] && extra=(-sigalgs "$sigalgs")
-  (cd "$WWW_DIR" && exec openssl s_server -accept "$PORT" -WWW \
+  (cd "$WWW_DIR" && exec openssl s_server -accept "$port" -WWW \
     -min_protocol TLSv1.3 -max_protocol TLSv1.3 \
     -cert "$cert" -key "$key" \
     -groups "$groups" "${extra[@]}" \
-    >"$LOG_FILE" 2>&1) &
-  echo $! >"$PID_FILE"
+    >"$logfile" 2>&1) &
+  echo $! >"$pidfile"
   sleep 1
-  kill -0 "$(cat "$PID_FILE")" || { cat "$LOG_FILE" >&2; exit 1; }
+  kill -0 "$(cat "$pidfile")" || { cat "$logfile" >&2; exit 1; }
 }
 
+cleanup() {
+  stop_server "$PID_FILE_CL" 2>/dev/null || true
+  stop_server "$PID_FILE_PQ" 2>/dev/null || true
+  latency_off
+}
+trap cleanup EXIT
+
 # Single measurement using curl (same tool for both arms).
+# measure_once <mode> <iteration> <ca> <groups> <port>
 measure_once() {
-  local mode="$1" iteration="$2" ca="$3" groups="$4"
+  local mode="$1" iteration="$2" ca="$3" groups="$4" port="$5"
   local ts curl_out connect app total size ok=0 group sig
   local hs_tmp; hs_tmp="$(mktemp)"
 
@@ -159,12 +180,12 @@ measure_once() {
     --cacert "$ca" \
     -o /dev/null \
     -w "%{time_connect},%{time_appconnect},%{time_total},%{size_download}" \
-    "https://127.0.0.1:${PORT}/${PAGE_FILE}" 2>/dev/null)" || true
+    "https://127.0.0.1:${port}/${PAGE_FILE}" 2>/dev/null)" || true
 
   IFS=, read -r connect app total size <<<"$curl_out"
   [ "${size:-0}" -eq "$EXPECTED_BYTES" ] && ok=1
 
-  openssl s_client -connect "127.0.0.1:$PORT" -tls1_3 \
+  openssl s_client -connect "127.0.0.1:$port" -tls1_3 \
     -CAfile "$ca" -groups "$groups" </dev/null >"$hs_tmp" 2>&1 || true
   group="$(grep -i 'Negotiated TLS1.3 group:' "$hs_tmp" | awk '{print $NF}')"
   if [ -z "$group" ]; then
@@ -190,17 +211,12 @@ measure_once() {
   echo "${ts},${mode},${iteration},${SIM_LATENCY_MS},${EXPECTED_BYTES},${size:-0},${connect_ms},${app_ms},${total_ms},${group:-},${sig:-},${ok}"
 }
 
-run_arm() {
-  local mode="$1" cert="$2" key="$3" ca="$4" groups="$5" sigalgs="$6"
-  start_server "$mode" "$cert" "$key" "$groups" "$sigalgs"
-  local i row
-  for i in $(seq 1 "$ITERATIONS"); do
-    row="$(measure_once "$mode" "$i" "$ca" "$groups")"
-    echo "$row" >>"$CSV_OUT"
-    printf "\r  [%s] %d/%d" "$mode" "$i" "$ITERATIONS"
-  done
-  echo
-  stop_server
+# Build a randomized sequence of ITERATIONS classical + ITERATIONS pqc trials.
+build_order() {
+  {
+    for _ in $(seq 1 "$ITERATIONS"); do echo classical; done
+    for _ in $(seq 1 "$ITERATIONS"); do echo pqc; done
+  } | shuf
 }
 
 summarize() {
@@ -230,22 +246,43 @@ cmd_run() {
   [ -f "$PAGE_PATH" ] || { echo "Run: $0 setup" >&2; exit 1; }
 
   mkdir -p "$DATA_DIR"
-  write_manifest
   latency_on
-  # Refresh manifest with latency method
   write_manifest
 
   echo "timestamp,mode,iteration,sim_latency_ms,page_bytes,downloaded_bytes,connect_ms,appconnect_ms,total_ms,tls_group,signature,success" >"$CSV_OUT"
 
-  echo "==> Classical arm ($ITERATIONS runs)..."
-  run_arm classical "$CL_CERT" "$CL_KEY" "$CL_CA" "$CLASSICAL_GROUPS" "$CLASSICAL_SIGALGS"
+  echo "==> Starting classical server on :$PORT ..."
+  start_server classical "$CL_CERT" "$CL_KEY" "$CLASSICAL_GROUPS" "$CLASSICAL_SIGALGS" "$PORT" "$PID_FILE_CL" "$LOG_FILE_CL"
 
-  echo "==> PQC arm ($ITERATIONS runs)..."
-  run_arm pqc "$PQ_CERT" "$PQ_KEY" "$PQ_CA" "$PQC_GROUPS" "$PQC_SIGALGS"
+  echo "==> Starting pqc server on :$PQC_PORT ..."
+  start_server pqc "$PQ_CERT" "$PQ_KEY" "$PQC_GROUPS" "$PQC_SIGALGS" "$PQC_PORT" "$PID_FILE_PQ" "$LOG_FILE_PQ"
+
+  echo "==> Generating randomized run order ($((ITERATIONS * 2)) trials)..."
+  build_order >"$ORDER_FILE"
+
+  local cl_i=0 pq_i=0 mode row n=0
+  local total=$((ITERATIONS * 2))
+  while IFS= read -r mode; do
+    n=$((n + 1))
+    if [ "$mode" = "classical" ]; then
+      cl_i=$((cl_i + 1))
+      row="$(measure_once classical "$cl_i" "$CL_CA" "$CLASSICAL_GROUPS" "$PORT")"
+    else
+      pq_i=$((pq_i + 1))
+      row="$(measure_once pqc "$pq_i" "$PQ_CA" "$PQC_GROUPS" "$PQC_PORT")"
+    fi
+    echo "$row" >>"$CSV_OUT"
+    printf "\r  [%d/%d] last=%s" "$n" "$total" "$mode"
+  done <"$ORDER_FILE"
+  echo
+
+  stop_server "$PID_FILE_CL"
+  stop_server "$PID_FILE_PQ"
 
   summarize
   echo "==> Results: $CSV_OUT"
   echo "==> Manifest: $MANIFEST"
+  echo "==> Run order (evidence of randomization): $ORDER_FILE"
 }
 
 cmd_all() {
@@ -258,11 +295,12 @@ usage() {
 Usage: $0 <command>
 
   setup   Create 150 KB page + classical/PQC certs
-  run     Run 60 identical measurements per arm (needs setup)
+  run     Run 60 randomized/interleaved measurements per arm (needs setup)
   all     setup + run
 
 Shared config: experiment/config.env
   PAGE_SIZE_KB=$PAGE_SIZE_KB  ITERATIONS=$ITERATIONS  SIM_LATENCY_MS=$SIM_LATENCY_MS
+  Classical port: $PORT   PQC port: $PQC_PORT
 EOF
 }
 
