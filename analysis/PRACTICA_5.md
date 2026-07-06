@@ -1,6 +1,5 @@
 # Práctica 5 — Recolección y análisis de datos
-
-> Sección lista para integrar en el informe. Ajustar nombres de integrantes y fechas según corresponda.
+Uziel Almonte and William Lang
 
 ---
 
@@ -120,7 +119,6 @@ Dado que se comparan **dos grupos independientes** con variable continua:
 | Figura 2 | `analysis/output/handshake_boxplot.png` | Boxplot — handshake TLS por brazo |
 | Figura 3 | `analysis/output/total_ms_histogram.png` | Histogramas superpuestos de latencia |
 
-*(Insertar figuras en el documento Word/PDF del informe.)*
 
 ---
 
