@@ -1,178 +1,178 @@
-# Práctica 5 — Recolección y análisis de datos
+# Practice 5 — Data Collection and Analysis
 Uziel Almonte and William Lang
 
 ---
 
-## 5. Aplicación del instrumento a la muestra
+## 5. Applying the instrument to the sample
 
-### 5.1 Instrumento aplicado
+### 5.1 Applied instrument
 
-Se aplicó un **instrumento de medición automatizado** desarrollado para este estudio (`experiment/run.sh`), que garantiza condiciones idénticas entre brazos experimentales:
+An **automated measurement instrument** developed for this study (`experiment/run.sh`) was applied, ensuring identical conditions between experimental arms:
 
-| Control | Valor aplicado |
+| Control | Applied value |
 |---------|----------------|
-| Página web | 150 KB (`page-150k.bin`, 153 600 bytes) |
-| Herramienta de medición | **curl 8.18** (OpenSSL 3.5.5) |
-| Iteraciones por grupo | **60** |
-| Latencia simulada | **50 ms** antes de cada solicitud |
-| Protocolo | TLS 1.3 |
-| Puerto | 7443 |
-| Servidor | `openssl s_server` |
+| Web page | 150 KB (`page-150k.bin`, 153,600 bytes) |
+| Measurement tool | **curl 8.18** (OpenSSL 3.5.5) |
+| Iterations per group | **60** |
+| Simulated latency | **50 ms** before each request |
+| Protocol | TLS 1.3 |
+| Port | 7443 |
+| Server | `openssl s_server` |
 
-**Validación criptográfica:** `openssl s_client` verificó en cada iteración el grupo TLS y el algoritmo de firma negociados.
+**Cryptographic validation:** `openssl s_client` verified the TLS group and negotiated signature algorithm in each iteration.
 
-> **Nota metodológica:** En la Práctica II se mencionaron JMeter, Wireshark y Prometheus. Para esta fase piloto se utilizó un script unificado (curl + OpenSSL) que mide directamente las variables dependientes (`total_ms`, `appconnect_ms`) con menor overhead y reproducibilidad en entorno controlado. Wireshark/JMeter pueden incorporarse en una fase de validación cruzada.
+> **Methodological note:** Practice II mentioned JMeter, Wireshark, and Prometheus. For this pilot phase, a unified script (curl + OpenSSL) was used to directly measure dependent variables (`total_ms`, `appconnect_ms`) with lower overhead and reproducibility in a controlled environment. Wireshark/JMeter can be incorporated in a cross-validation phase.
 
-### 5.2 Configuración experimental (brazos comparados)
+### 5.2 Experimental setup (compared arms)
 
-La hipótesis compara **criptografía tradicional** frente a **post-cuántica en TLS**. En la práctica, TLS combina un algoritmo de intercambio de claves y uno de firma en cada conexión. Por ello se definieron **dos brazos** (no cuatro grupos aislados):
+The hypothesis compares **traditional cryptography** versus **post-quantum cryptography in TLS**. In practice, TLS combines a key exchange algorithm and a signature algorithm in each connection. Therefore, **two arms** were defined (not four isolated groups):
 
-| Brazo | Intercambio de claves | Firma (certificado) | Equivalente NIST |
+| Arm | Key exchange | Signature (certificate) | NIST equivalent |
 |-------|----------------------|---------------------|------------------|
-| **Clásico** | X25519 | ECDSA P-256 | Baseline TLS 1.3 moderno |
-| **Post-cuántico** | ML-KEM-768 (Kyber) | ML-DSA-65 (Dilithium) | CPQ NIST |
+| **Classical** | X25519 | ECDSA P-256 | Modern TLS 1.3 baseline |
+| **Post-quantum** | ML-KEM-768 (Kyber) | ML-DSA-65 (Dilithium) | NIST PQC |
 
-> RSA-2048 no se incluyó en TLS 1.3 porque no es el intercambio de claves típico en sitios modernos (se usa ECDH/X25519). ECDSA P-256 sí representa el estándar actual de certificados.
+> RSA-2048 was not included in TLS 1.3 because it is not the typical key exchange in modern sites (ECDH/X25519 is used). ECDSA P-256 does represent the current certificate standard.
 
-### 5.3 Muestra recolectada
+### 5.3 Collected sample
 
-- **Población:** mediciones de tiempo de carga y handshake bajo condiciones controladas.
-- **Muestreo:** 60 ejecuciones independientes por brazo (**n = 120** en total).
-- **Datos válidos:** 120/120 (`success = 1` en todas las filas).
-- **Archivo:** `experiment/data/results.csv`
-- **Manifiesto:** `experiment/data/manifest.txt`
+- **Population:** page load and handshake time measurements under controlled conditions.
+- **Sampling:** 60 independent runs per arm (**n = 120** total).
+- **Valid data:** 120/120 (`success = 1` in all rows).
+- **File:** `experiment/data/results.csv`
+- **Manifest:** `experiment/data/manifest.txt`
 
 ---
 
-## 6. Métodos de análisis cuantitativo
+## 6. Quantitative analysis methods
 
-### 6.1 Tipo de variables
+### 6.1 Variable types
 
-| Variable | Tipo | Escala | Análisis |
+| Variable | Type | Scale | Analysis |
 |----------|------|--------|----------|
-| Tipo de algoritmo (`mode`) | Independiente | Nominal (clásico / pqc) | Factor de agrupación |
-| Tiempo total (`total_ms`) | Dependiente | Razón (ms) | Estadística inferencial |
-| Handshake TLS (`appconnect_ms`) | Dependiente | Razón (ms) | Estadística inferencial |
+| Algorithm type (`mode`) | Independent | Nominal (classical / pqc) | Grouping factor |
+| Total time (`total_ms`) | Dependent | Ratio (ms) | Inferential statistics |
+| TLS handshake (`appconnect_ms`) | Dependent | Ratio (ms) | Inferential statistics |
 
-### 6.2 Estadística descriptiva
+### 6.2 Descriptive statistics
 
-Se calcularon para cada brazo: **n, media, desviación estándar, mediana, mínimo y máximo**.
+For each arm, **n, mean, standard deviation, median, minimum, and maximum** were calculated.
 
-### 6.3 Estadística inferencial
+### 6.3 Inferential statistics
 
-Dado que se comparan **dos grupos independientes** con variable continua:
+Since **two independent groups** with a continuous variable are compared:
 
-1. **Prueba de normalidad:** Shapiro-Wilk por grupo.
-2. **Prueba t de Student para muestras independientes (Welch):** no asume varianzas iguales.
-3. **Prueba de Mann-Whitney U:** alternativa no paramétrica (refuerzo, dado rechazo de normalidad).
-4. **Tamaño del efecto:** Cohen's *d*.
-5. **Nivel de significancia:** α = 0.05.
+1. **Normality test:** Shapiro-Wilk per group.
+2. **Independent samples Student's t-test (Welch):** does not assume equal variances.
+3. **Mann-Whitney U test:** non-parametric alternative (reinforcement, given normality rejection).
+4. **Effect size:** Cohen's *d*.
+5. **Significance level:** α = 0.05.
 
-> Aunque Shapiro-Wilk rechazó normalidad (común en latencias), con **n = 60** el TCL respalda la prueba t sobre medias; Mann-Whitney confirma el resultado sin asumir normalidad.
+> Although Shapiro-Wilk rejected normality (common in latencies), with **n = 60** the CLT supports using the t-test on means; Mann-Whitney confirms the result without assuming normality.
 
-**Script de análisis:** `analysis/analyze.R`  
-**Gráficos:** `analysis/output/*.png`
+**Analysis script:** `analysis/analyze.R`  
+**Charts:** `analysis/output/*.png`
 
 ---
 
-## 7. Resultados
+## 7. Results
 
-### 7.1 Estadística descriptiva
+### 7.1 Descriptive statistics
 
-**Tabla 1. Tiempo total de carga (150 KB)**
+**Table 1. Total page load time (150 KB)**
 
-| Brazo | n | Media (ms) | DE (ms) | Mediana (ms) | Mín (ms) | Máx (ms) |
+| Arm | n | Mean (ms) | SD (ms) | Median (ms) | Min (ms) | Max (ms) |
 |-------|---|------------|---------|--------------|----------|----------|
-| Clásico (X25519 + ECDSA) | 60 | **3.63** | 1.21 | 3.27 | 2.82 | 8.38 |
-| Post-cuántico (ML-KEM + ML-DSA) | 60 | **4.93** | 1.49 | 4.43 | 3.47 | 9.99 |
+| Classical (X25519 + ECDSA) | 60 | **3.63** | 1.21 | 3.27 | 2.82 | 8.38 |
+| Post-quantum (ML-KEM + ML-DSA) | 60 | **4.93** | 1.49 | 4.43 | 3.47 | 9.99 |
 
-**Tabla 2. Duración del handshake TLS (`appconnect`)**
+**Table 2. TLS handshake duration (`appconnect`)**
 
-| Brazo | n | Media (ms) | DE (ms) | Mediana (ms) | Mín (ms) | Máx (ms) |
+| Arm | n | Mean (ms) | SD (ms) | Median (ms) | Min (ms) | Max (ms) |
 |-------|---|------------|---------|--------------|----------|----------|
-| Clásico | 60 | **3.16** | 1.05 | 2.86 | 2.48 | 7.61 |
-| Post-cuántico | 60 | **4.45** | 1.41 | 3.89 | 3.13 | 9.37 |
+| Classical | 60 | **3.16** | 1.05 | 2.86 | 2.48 | 7.61 |
+| Post-quantum | 60 | **4.45** | 1.41 | 3.89 | 3.13 | 9.37 |
 
-**Observación:** El brazo post-cuántico es consistentemente más lento. La diferencia se concentra en el handshake; el tiempo TCP (`connect_ms`) es similar (~0.15 ms en ambos).
+**Observation:** The post-quantum arm is consistently slower. The difference is concentrated in the handshake; TCP time (`connect_ms`) is similar (~0.15 ms in both).
 
-### 7.2 Prueba de hipótesis
+### 7.2 Hypothesis test
 
-**Hipótesis nula (H₀):** No existe diferencia en el tiempo de carga entre algoritmos clásicos y post-cuánticos.  
-**Hipótesis alternativa (H₁):** Existe diferencia estadísticamente significativa.
+**Null hypothesis (H₀):** There is no difference in load time between classical and post-quantum algorithms.  
+**Alternative hypothesis (H₁):** There is a statistically significant difference.
 
-**Tabla 3. Prueba t de Welch (α = 0.05)**
+**Table 3. Welch t-test (α = 0.05)**
 
-| Variable | Clásico (ms) | PQC (ms) | Diferencia | % | t | gl | p-valor | Cohen's d | IC 95% diff |
+| Variable | Classical (ms) | PQC (ms) | Difference | % | t | df | p-value | Cohen's d | 95% CI diff |
 |----------|-------------|----------|------------|---|-----|-----|---------|-----------|-------------|
-| Tiempo total | 3.63 | 4.93 | +1.30 | +35.9% | -5.26 | 113.4 | **< 0.001** | 0.96 | [-1.79, -0.81] |
+| Total time | 3.63 | 4.93 | +1.30 | +35.9% | -5.26 | 113.4 | **< 0.001** | 0.96 | [-1.79, -0.81] |
 | Handshake | 3.16 | 4.45 | +1.29 | +41.0% | -5.70 | 109.3 | **< 0.001** | 1.04 | [-1.74, -0.84] |
 
-**Mann-Whitney U:** p < 0.001 para ambas variables (confirma el resultado).
+**Mann-Whitney U:** p < 0.001 for both variables (confirms the result).
 
-**Conclusión estadística:** Se **rechaza H₀**. La diferencia en tiempo de carga y en duración del handshake es **estadísticamente significativa** (p < 0.001) con **tamaño del efecto grande** (Cohen's d ≈ 1.0).
+**Statistical conclusion:** **H₀ is rejected**. The difference in load time and handshake duration is **statistically significant** (p < 0.001) with a **large effect size** (Cohen's d ≈ 1.0).
 
-### 7.3 Gráficos
+### 7.3 Charts
 
-| Figura | Archivo | Descripción |
+| Figure | File | Description |
 |--------|---------|-------------|
-| Figura 1 | `analysis/output/total_ms_boxplot.png` | Boxplot — tiempo total por brazo |
-| Figura 2 | `analysis/output/handshake_boxplot.png` | Boxplot — handshake TLS por brazo |
-| Figura 3 | `analysis/output/total_ms_histogram.png` | Histogramas superpuestos de latencia |
+| Figure 1 | `analysis/output/total_ms_boxplot.png` | Boxplot — total time by arm |
+| Figure 2 | `analysis/output/handshake_boxplot.png` | Boxplot — TLS handshake by arm |
+| Figure 3 | `analysis/output/total_ms_histogram.png` | Overlaid latency histograms |
 
 
 ---
 
-## 8. Análisis en relación con la pregunta de investigación
+## 8. Analysis in relation to the research question
 
-**Pregunta:** ¿Cuál es la diferencia estadísticamente significativa en el tiempo de carga de un sitio web seguro al utilizar CPQ (Kyber + Dilithium) frente a algoritmos tradicionales bajo condiciones de red controladas?
+**Question:** What is the statistically significant difference in secure website load time when using PQC (Kyber + Dilithium) versus traditional algorithms under controlled network conditions?
 
-### Hallazgos principales
+### Main findings
 
-1. **Sí hay diferencia significativa.** CPQ es ~1.3 ms más lento en carga total y ~1.3 ms en handshake (p < 0.001).
+1. **Yes, there is a significant difference.** PQC is ~1.3 ms slower in total load and ~1.3 ms in handshake (p < 0.001).
 
-2. **El overhead es proporcionalmente moderado en este entorno** (~36% más en tiempo total), pero el efecto estadístico es grande (d ≈ 1.0) por la consistencia del patrón en 60 muestras.
+2. **The overhead is proportionally moderate in this environment** (~36% more in total time), but the statistical effect is large (d ≈ 1.0) due to the consistency of the pattern across 60 samples.
 
-3. **La mayor parte del costo está en el handshake**, no en la descarga de 150 KB (misma en ambos brazos). Esto confirma que el impacto de CPQ se debe principalmente a:
-   - Certificados ML-DSA más grandes (~7 KB vs ~1 KB ECDSA).
-   - Mensajes de intercambio ML-KEM más grandes que X25519.
-   - Operaciones criptográficas de retículos más costosas.
+3. **Most of the cost is in the handshake**, not in the 150 KB download (same in both arms). This confirms that PQC impact is mainly due to:
+   - Larger ML-DSA certificates (~7 KB vs ~1 KB ECDSA).
+   - Larger ML-KEM exchange messages than X25519.
+   - More expensive lattice-based cryptographic operations.
 
-4. **Fiabilidad:** 100% de éxito en ambos brazos (60/60). CPQ no degradó la confiabilidad en condiciones controladas.
+4. **Reliability:** 100% success in both arms (60/60). PQC did not degrade reliability under controlled conditions.
 
-5. **Relevancia para UX:** En este entorno (localhost + 50 ms simulados), la diferencia absoluta (~1.3 ms) está **muy por debajo** del umbral de 100 ms citado en el planteamiento. En redes reales con mayor latencia, el componente fijo del handshake pesaría más en términos relativos.
+5. **UX relevance:** In this environment (localhost + simulated 50 ms), the absolute difference (~1.3 ms) is **well below** the 100 ms threshold cited in the proposal. In real networks with higher latency, the fixed handshake component would weigh more in relative terms.
 
-### Respuesta directa a la hipótesis
+### Direct response to the hypothesis
 
-> Bajo condiciones controladas (página de 150 KB, TLS 1.3, 60 mediciones por brazo, latencia simulada de 50 ms), **el uso de CRYSTALS-Kyber (ML-KEM-768) y CRYSTALS-Dilithium (ML-DSA-65) produce un tiempo de carga y un handshake TLS significativamente mayores** que la configuración clásica X25519 + ECDSA P-256 (p < 0.001). La hipótesis de diferencia significativa **se acepta**.
+> Under controlled conditions (150 KB page, TLS 1.3, 60 measurements per arm, simulated 50 ms latency), **the use of CRYSTALS-Kyber (ML-KEM-768) and CRYSTALS-Dilithium (ML-DSA-65) produces significantly higher load time and TLS handshake time** than the classical X25519 + ECDSA P-256 configuration (p < 0.001). The hypothesis of a significant difference **is accepted**.
 
-### Limitaciones de esta fase
+### Limitations of this phase
 
-| Aspecto | Práctica II (diseño) | Implementación actual |
+| Aspect | Practice II (design) | Current implementation |
 |---------|---------------------|------------------------|
-| Grupos | 4 niveles separados | 2 brazos TLS (KEM+firma combinados) |
-| RSA-2048 | Incluido | No (TLS 1.3 usa ECDH/X25519) |
-| Latencia | 20 ms ± 2 ms, 100 Mbps | 50 ms sleep (tc netem pendiente) |
-| Hardware | Xeon E-2288G dedicado | WSL2 / entorno local |
-| Herramientas | JMeter + Wireshark | curl + OpenSSL (script propio) |
+| Groups | 4 separate levels | 2 TLS arms (combined KEM+signature) |
+| RSA-2048 | Included | No (TLS 1.3 uses ECDH/X25519) |
+| Latency | 20 ms ± 2 ms, 100 Mbps | 50 ms sleep (`tc netem` pending) |
+| Hardware | Dedicated Xeon E-2288G | WSL2 / local environment |
+| Tools | JMeter + Wireshark | curl + OpenSSL (custom script) |
 
-Estas limitaciones no invalidan el hallazgo de significancia, pero **deben reportarse** y abordarse en iteraciones futuras (servidor dedicado, `tc netem`, validación cruzada con Wireshark).
+These limitations do not invalidate the significance finding, but they **must be reported** and addressed in future iterations (dedicated server, `tc netem`, cross-validation with Wireshark).
 
 ---
 
-## 9. Cómo reproducir
+## 9. How to reproduce
 
 ```bash
-# Recolectar datos
+# Collect data
 bash experiment/run.sh all
 
-# Análisis estadístico + gráficos
+# Statistical analysis + charts
 Rscript analysis/analyze.R
 ```
 
 ---
 
-## Referencias sugeridas para el informe
+## Suggested references for the report
 
-- NIST FIPS 203 (ML-KEM) y FIPS 204 (ML-DSA).
-- Shor, P. — algoritmo cuántico para factorización/log discreto.
-- OpenSSL 3.5 release notes — soporte nativo PQC.
+- NIST FIPS 203 (ML-KEM) and FIPS 204 (ML-DSA).
+- Shor, P. — quantum algorithm for factoring/discrete log.
+- OpenSSL 3.5 release notes — native PQC support.
