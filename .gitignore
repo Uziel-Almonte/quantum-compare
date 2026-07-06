@@ -3,6 +3,7 @@ pqc/data/
 experiment/www/
 experiment/certs/
 experiment/data/
+analysis/output/
 deps/
 .local/
 *.log
